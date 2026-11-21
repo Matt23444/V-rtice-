@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vórtice</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
+  #v { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #bar { position: fixed; left: 0; right: 0; top: 0; padding: 10px 12px; display: flex; gap: 10px; flex-wrap: wrap;
+         align-items: center; background: rgba(0,0,0,.68); transition: opacity .3s; font-size: 14px; }
+  #bar.hide { opacity: 0; pointer-events: none; }
+  button { background: #3c4043; color: #fff; border: 0; border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+  button:active { background: #5f6368; }
+  input[type=range] { vertical-align: middle; width: 140px; }
+  #st { opacity: .8; margin-left: auto; }
+</style>
+</head>
+<body>
+<img id="v" alt="">
+<div id="bar">
+  <b>Vórtice</b>
+  <button id="fs">Pantalla completa</button>
+  <button id="au" hidden>🔊 Activar audio</button>
+  <label id="dl" hidden>Sincronía de audio
+    <input id="delay" type="range" min="0" max="3000" step="100" value="0">
+    <span id="dv">0 ms</span>
+  </label>
+  <span id="st">Conectando…</span>
+</div>
+<audio id="a"></audio>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var k = encodeURIComponent(q.get('k') || '');
+  var v = document.getElementById('v'), bar = document.getElementById('bar'), st = document.getElementById('st');
+  var au = document.getElementById('au'), a = document.getElementById('a'), dl = document.getElementById('dl');
+  var delay = document.getElementById('delay'), dv = document.getElementById('dv'), fs = document.getElementById('fs');
+  var delayMs = 0, audioOn = false, ok = true, hideTimer = null;
+
+  try { delayMs = parseInt(localStorage.getItem('vortice_delay') || '0', 10) || 0; } catch (e) {}
+  delay.value = delayMs; dv.textContent = delayMs + ' ms';
+
+  function startVideo() { v.src = '/video?k=' + k + '&delay=' + delayMs + '&t=' + Date.now(); }
+  function startAudio() { a.src = '/audio?k=' + k + '&t=' + Date.now(); var p = a.play(); if (p && p.catch) p.catch(function () {}); }
+
+  function ping() {
+    fetch('/info?k=' + k, { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('x'); return r.json(); })
+      .then(function (j) {
+        st.textContent = 'En vivo';
+        if (j.audio) au.hidden = false;
+        if (!ok) { ok = true; startVideo(); if (audioOn) startAudio(); }
+      })
+      .catch(function () { ok = false; st.textContent = 'Sin conexión…'; });
+  }
+
+  au.onclick = function () {
+    audioOn = !audioOn;
+    if (audioOn) { startAudio(); au.textContent = '🔇 Silenciar audio'; dl.hidden = false; }
+    else { a.pause(); a.removeAttribute('src'); a.load(); au.textContent = '🔊 Activar audio'; }
+  };
+  delay.oninput = function () { dv.textContent = delay.value + ' ms'; };
+  delay.onchange = function () {
+    delayMs = parseInt(delay.value, 10) || 0;
+    try { localStorage.setItem('vortice_delay', String(delayMs)); } catch (e) {}
+    startVideo();
+  };
+  fs.onclick = function () {
+    var d = document, el = d.documentElement;
+    if (d.fullscreenElement) { d.exitFullscreen(); }
+    else if (el.requestFullscreen) { el.requestFullscreen(); }
+  };
+
+  function showBar() {
+    bar.classList.remove('hide');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function () { bar.classList.add('hide'); }, 4000);
+  }
+  ['pointerdown', 'pointermove', 'keydown'].forEach(function (ev) { window.addEventListener(ev, showBar); });
+  showBar();
+
+  startVideo();
+  ping();
+  setInterval(ping, 3000);
+})();
+</script>
+</body>
+</html>

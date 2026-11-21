@@ -20,8 +20,9 @@ class CaptureRequestActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode == RESULT_OK && data != null) {
-            val i = Intent(this, RecordService::class.java)
-                .setAction(RecordService.ACTION_START)
+            val stream = intent.getStringExtra("mode") == "stream"
+            val i = Intent(this, if (stream) StreamService::class.java else RecordService::class.java)
+                .setAction(if (stream) StreamService.ACTION_START else RecordService.ACTION_START)
                 .putExtra(RecordService.EXTRA_CODE, resultCode)
                 .putExtra(RecordService.EXTRA_DATA, data)
             startForegroundService(i)

@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Color
@@ -13,9 +15,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Icon
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -23,11 +23,12 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
 
-/** Burbuja flotante (arrastrable) con un panel de controles y ajustes de calidad. */
+/** Burbuja flotante (arrastrable) con un panel de controles y ajustes. */
 class OverlayService : Service() {
 
     companion object {
@@ -38,20 +39,29 @@ class OverlayService : Service() {
         @Volatile var running = false
     }
 
-    private val main = Handler(Looper.getMainLooper())
     private lateinit var wm: WindowManager
     private lateinit var bubble: TextView
+    private lateinit var scroll: ScrollView
     private lateinit var panel: LinearLayout
     private lateinit var bubbleLp: WindowManager.LayoutParams
     private lateinit var panelLp: WindowManager.LayoutParams
+
     private lateinit var recBtn: Button
+    private lateinit var streamBtn: Button
+    private lateinit var urlText: TextView
+    private lateinit var copyBtn: Button
     private lateinit var resBtn: Button
     private lateinit var fpsBtn: Button
     private lateinit var vidBtn: Button
     private lateinit var audBtn: Button
     private lateinit var micBtn: Button
     private lateinit var audQBtn: Button
+    private lateinit var sresBtn: Button
+    private lateinit var sfpsBtn: Button
+    private lateinit var sqBtn: Button
+    private lateinit var saudBtn: Button
     private lateinit var hideBtn: Button
+
     private var built = false
     private var bubbleShown = false
     private var panelShown = false
@@ -71,7 +81,8 @@ class OverlayService : Service() {
         buildPanel()
         built = true
         running = true
-        RecordService.onState = { rec -> onRecState(rec) }
+        RecordService.onState = { _ -> onActiveChanged() }
+        StreamService.onState = { _ -> onActiveChanged() }
         refresh()
         showBubble()
     }
@@ -86,6 +97,7 @@ class OverlayService : Service() {
         running = false
         if (built) {
             RecordService.onState = null
+            StreamService.onState = null
             hidePanel()
             hideBubble()
         }
@@ -168,14 +180,25 @@ class OverlayService : Service() {
         ).apply { bottomMargin = dp(8) })
     }
 
+    private fun header(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(0xFF9AA0A6.toInt())
+        setPadding(0, dp(6), 0, dp(4))
+    }
+
     private fun buildPanel() {
         val grey = 0xFF3C4043.toInt()
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(6))
-            background = roundBg(0xF2202124.toInt(), 18)
         }
-        panelLp = overlayParams(dp(260), WindowManager.LayoutParams.WRAP_CONTENT)
+        scroll = ScrollView(this).apply {
+            background = roundBg(0xF2202124.toInt(), 18)
+            addView(panel)
+        }
+        panelLp = overlayParams(dp(270), WindowManager.LayoutParams.WRAP_CONTENT)
 
         panel.addRow(TextView(this).apply {
             text = "Vórtice"
@@ -197,23 +220,78 @@ class OverlayService : Service() {
         }
         panel.addRow(recBtn)
 
+        streamBtn = makeButton(0xFF1A73E8.toInt()) {
+            if (StreamService.streaming) {
+                startService(Intent(this, StreamService::class.java).setAction(StreamService.ACTION_STOP))
+                hidePanel()
+            } else {
+                hidePanel()
+                startActivity(
+                    Intent(this, CaptureRequestActivity::class.java)
+                        .putExtra("mode", "stream")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
+        panel.addRow(streamBtn)
+
+        urlText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xFF8AB4F8.toInt())
+            visibility = View.GONE
+        }
+        panel.addRow(urlText)
+        copyBtn = makeButton(grey) {
+            val u = StreamService.url
+            if (u != null) {
+                getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("Vórtice", u))
+                Toast.makeText(this, "Enlace copiado", Toast.LENGTH_SHORT).show()
+            }
+        }.apply { text = "Copiar enlace"; visibility = View.GONE }
+        panel.addRow(copyBtn)
+
+        panel.addRow(header("GRABACIÓN"))
         resBtn = makeButton(grey) { Cfg.cycle(this, "res", Cfg.RES.size, Cfg.DEF_RES); refresh() }
         fpsBtn = makeButton(grey) { Cfg.cycle(this, "fps", Cfg.FPS.size, Cfg.DEF_FPS); refresh() }
         vidBtn = makeButton(grey) { Cfg.cycle(this, "video", Cfg.VIDEO_KBPS.size, Cfg.DEF_VIDEO); refresh() }
         audBtn = makeButton(grey) { Cfg.toggleAudio(this); refresh() }
         micBtn = makeButton(grey) { Cfg.toggleMic(this); refresh() }
         audQBtn = makeButton(grey) { Cfg.cycle(this, "audioq", Cfg.AUDIO_KBPS.size, Cfg.DEF_AUDIO_Q); refresh() }
-        hideBtn = makeButton(grey) { Cfg.toggleHideBubble(this); refresh() }
-        listOf(resBtn, fpsBtn, vidBtn, audBtn, micBtn, audQBtn, hideBtn).forEach { panel.addRow(it) }
+        listOf(resBtn, fpsBtn, vidBtn, audBtn, micBtn, audQBtn).forEach { panel.addRow(it) }
 
+        panel.addRow(header("TRANSMISIÓN POR WI-FI"))
+        sresBtn = makeButton(grey) { Cfg.cycle(this, "sres", Cfg.STREAM_RES.size, Cfg.DEF_SRES); refresh() }
+        sfpsBtn = makeButton(grey) { Cfg.cycle(this, "sfps", Cfg.STREAM_FPS.size, Cfg.DEF_SFPS); refresh() }
+        sqBtn = makeButton(grey) { Cfg.cycle(this, "sq", Cfg.STREAM_Q.size, Cfg.DEF_SQ); refresh() }
+        saudBtn = makeButton(grey) { Cfg.toggleStreamAudio(this); refresh() }
+        listOf(sresBtn, sfpsBtn, sqBtn, saudBtn).forEach { panel.addRow(it) }
+
+        panel.addRow(header("GENERAL"))
+        hideBtn = makeButton(grey) { Cfg.toggleHideBubble(this); refresh() }
+        panel.addRow(hideBtn)
         panel.addRow(makeButton(0xFF5F6368.toInt()) { stopSelf() }.apply { text = "Cerrar overlay" })
     }
 
-    /** Actualiza textos y el aspecto según los ajustes y el estado de grabación. */
+    /** Actualiza textos y el aspecto según los ajustes y el estado. */
     private fun refresh() {
         if (!built) return
         val rec = RecordService.recording
+        val strm = StreamService.streaming
+        val busy = rec || strm
+
         recBtn.text = if (rec) "■  Detener grabación" else "●  Grabar"
+        streamBtn.text = if (strm) "■  Detener transmisión" else "▶  Transmitir pantalla"
+        recBtn.isEnabled = !strm
+        recBtn.alpha = if (strm) 0.4f else 1f
+        streamBtn.isEnabled = !rec
+        streamBtn.alpha = if (rec) 0.4f else 1f
+
+        val u = StreamService.url
+        urlText.visibility = if (strm && u != null) View.VISIBLE else View.GONE
+        copyBtn.visibility = if (strm && u != null) View.VISIBLE else View.GONE
+        urlText.text = "En el otro dispositivo (misma red Wi-Fi) abre en el navegador:\n$u"
+
         resBtn.text = "Resolución: ${Cfg.resolution(this)}p"
         fpsBtn.text = "Fotogramas: ${Cfg.fps(this)} fps"
         vidBtn.text = "Calidad de video: ${Cfg.videoKbps(this) / 1000} Mbps"
@@ -221,30 +299,39 @@ class OverlayService : Service() {
         micBtn.text = "Micrófono: " + if (Cfg.micOn(this)) "Sí" else "No"
         audQBtn.text = "Calidad de audio: ${Cfg.audioKbps(this)} kbps"
         audQBtn.visibility = if (Cfg.audioOn(this) || Cfg.micOn(this)) View.VISIBLE else View.GONE
-        hideBtn.text = "Burbuja al grabar: " + if (Cfg.hideBubble(this)) "oculta" else "visible"
 
-        // Mientras se graba no se puede cambiar la calidad
-        listOf(resBtn, fpsBtn, vidBtn, audBtn, micBtn, audQBtn).forEach {
-            it.isEnabled = !rec
-            it.alpha = if (rec) 0.4f else 1f
+        sresBtn.text = "Resolución: ${Cfg.streamRes(this)}p"
+        sfpsBtn.text = "Fluidez: ${Cfg.streamFps(this)} fps"
+        sqBtn.text = "Calidad de imagen: ${Cfg.streamQualityName(this)}"
+        saudBtn.text = "Audio de la transmisión: " + if (Cfg.streamAudioOn(this)) "Sí" else "No"
+        hideBtn.text = "Burbuja al grabar o transmitir: " + if (Cfg.hideBubble(this)) "oculta" else "visible"
+
+        // Mientras algo está activo no se pueden cambiar los ajustes
+        listOf(resBtn, fpsBtn, vidBtn, audBtn, micBtn, audQBtn, sresBtn, sfpsBtn, sqBtn, saudBtn).forEach {
+            it.isEnabled = !busy
+            it.alpha = if (busy) 0.4f else 1f
         }
 
-        bubble.text = if (rec) "■" else "●"
+        bubble.text = if (busy) "■" else "●"
         bubble.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(if (rec) 0xE6D93025.toInt() else 0xE6202124.toInt())
+            setColor(
+                when {
+                    rec -> 0xE6D93025.toInt()
+                    strm -> 0xE61A73E8.toInt()
+                    else -> 0xE6202124.toInt()
+                }
+            )
             setStroke(dp(2), Color.WHITE)
-        }
-        if (panelShown) {
-            try { wm.updateViewLayout(panel, panelLp) } catch (ex: Exception) {}
         }
     }
 
-    private fun onRecState(rec: Boolean) {
+    private fun onActiveChanged() {
         if (!built) return
         hidePanel()
         refresh()
-        if (rec && Cfg.hideBubble(this)) hideBubble() else showBubble()
+        val busy = RecordService.recording || StreamService.streaming
+        if (busy && Cfg.hideBubble(this)) hideBubble() else showBubble()
     }
 
     // ------------------------------------------------------------ ventanas
@@ -267,15 +354,16 @@ class OverlayService : Service() {
     private fun showPanel() {
         if (panelShown) return
         val dm = resources.displayMetrics
-        panelLp.x = (bubbleLp.x + dp(56)).coerceAtMost(dm.widthPixels - dp(260) - dp(8)).coerceAtLeast(dp(8))
-        panelLp.y = bubbleLp.y.coerceAtMost(dm.heightPixels - dp(520)).coerceAtLeast(dp(24))
         refresh()
-        try { wm.addView(panel, panelLp); panelShown = true } catch (ex: Exception) {}
+        panelLp.height = (dm.heightPixels * 0.8f).toInt()
+        panelLp.x = (bubbleLp.x + dp(56)).coerceAtMost(dm.widthPixels - dp(270) - dp(8)).coerceAtLeast(dp(8))
+        panelLp.y = dp(40)
+        try { wm.addView(scroll, panelLp); panelShown = true } catch (ex: Exception) {}
     }
 
     private fun hidePanel() {
         if (!panelShown) return
-        try { wm.removeView(panel) } catch (ex: Exception) {}
+        try { wm.removeView(scroll) } catch (ex: Exception) {}
         panelShown = false
     }
 

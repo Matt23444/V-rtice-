@@ -48,6 +48,26 @@ object Cfg {
         return v
     }
 
+    // --- Transmisión por red local
+    val STREAM_RES = intArrayOf(360, 480, 720)
+    val STREAM_FPS = intArrayOf(8, 12, 15, 24)
+    val STREAM_Q = intArrayOf(40, 55, 70, 85)
+    val STREAM_Q_NAMES = arrayOf("Baja", "Media", "Alta", "Máxima")
+    const val DEF_SRES = 1
+    const val DEF_SFPS = 1
+    const val DEF_SQ = 1
+
+    fun streamRes(c: Context) = STREAM_RES[idx(c, "sres", DEF_SRES)]
+    fun streamFps(c: Context) = STREAM_FPS[idx(c, "sfps", DEF_SFPS)]
+    fun streamQuality(c: Context) = STREAM_Q[idx(c, "sq", DEF_SQ)]
+    fun streamQualityName(c: Context) = STREAM_Q_NAMES[idx(c, "sq", DEF_SQ)]
+    fun streamAudioOn(c: Context): Boolean = prefs(c).getBoolean("saudio", true)
+    fun toggleStreamAudio(c: Context): Boolean {
+        val v = !streamAudioOn(c)
+        prefs(c).edit().putBoolean("saudio", v).apply()
+        return v
+    }
+
     fun resolution(c: Context) = RES[idx(c, "res", DEF_RES)]
     fun fps(c: Context) = FPS[idx(c, "fps", DEF_FPS)]
     fun videoKbps(c: Context) = VIDEO_KBPS[idx(c, "video", DEF_VIDEO)]
