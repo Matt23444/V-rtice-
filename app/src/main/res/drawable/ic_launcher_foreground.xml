@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Tres espirales que forman el vórtice -->
+    <path
+        android:pathData="M54,26 A28,28 0 1,1 26,54"
+        android:strokeWidth="5"
+        android:strokeColor="#7C4DFF"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M73,54 A19,19 0 1,1 54,35"
+        android:strokeWidth="5"
+        android:strokeColor="#40C4FF"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M54,64 A10,10 0 1,1 64,54"
+        android:strokeWidth="5"
+        android:strokeColor="#B388FF"
+        android:strokeLineCap="round" />
+    <!-- Punto de grabación al centro -->
+    <path
+        android:fillColor="#FF3B4E"
+        android:pathData="M54,49.5 a4.5,4.5 0 1,0 0,9 a4.5,4.5 0 1,0 0,-9z" />
+</vector>
