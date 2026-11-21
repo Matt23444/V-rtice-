@@ -32,6 +32,14 @@ object Cfg {
         return v
     }
 
+    /** Micrófono mezclado con el audio interno (apagado por defecto). */
+    fun micOn(c: Context): Boolean = prefs(c).getBoolean("mic", false)
+    fun toggleMic(c: Context): Boolean {
+        val v = !micOn(c)
+        prefs(c).edit().putBoolean("mic", v).apply()
+        return v
+    }
+
     /** true = la burbuja se oculta mientras se graba (así no sale en el video). */
     fun hideBubble(c: Context): Boolean = prefs(c).getBoolean("hide", true)
     fun toggleHideBubble(c: Context): Boolean {

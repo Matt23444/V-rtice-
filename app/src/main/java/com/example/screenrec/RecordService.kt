@@ -69,7 +69,13 @@ class RecordService : Service() {
 
     private fun startRecording(intent: Intent) {
         if (recording) return
-        startForegroundNow()
+        val audioPerm = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        val micWanted = Cfg.micOn(this) && audioPerm
+        val micAllowed = startForegroundNow(micWanted)
+        if (micWanted && !micAllowed) {
+            Toast.makeText(this, "Android no permitió usar el micrófono; se graba sin él", Toast.LENGTH_LONG).show()
+        }
 
         try {
             val code = intent.getIntExtra(EXTRA_CODE, 0)
@@ -125,6 +131,7 @@ class RecordService : Service() {
                 fps = Cfg.fps(this),
                 videoBitrate = Cfg.videoKbps(this) * 1000,
                 withAudio = Cfg.audioOn(this) && audioGranted,
+                withMic = micAllowed,
                 audioBitrate = Cfg.audioKbps(this) * 1000,
             )
             rec.start()
@@ -166,7 +173,7 @@ class RecordService : Service() {
         }
     }
 
-    private fun startForegroundNow() {
+    private fun startForegroundNow(mic: Boolean): Boolean {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, "Grabación", NotificationManager.IMPORTANCE_LOW)
@@ -186,7 +193,16 @@ class RecordService : Service() {
             .setOngoing(true)
             .addAction(action)
             .build()
-        startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        if (mic) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        return try {
+            startForeground(NOTIF_ID, n, type)
+            mic
+        } catch (ex: SecurityException) {
+            if (!mic) throw ex
+            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            false
+        }
     }
 
     private fun align16(v: Float): Int = maxOf(16, ((v + 8f) / 16f).toInt() * 16)

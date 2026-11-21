@@ -49,6 +49,7 @@ class OverlayService : Service() {
     private lateinit var fpsBtn: Button
     private lateinit var vidBtn: Button
     private lateinit var audBtn: Button
+    private lateinit var micBtn: Button
     private lateinit var audQBtn: Button
     private lateinit var hideBtn: Button
     private var built = false
@@ -200,9 +201,10 @@ class OverlayService : Service() {
         fpsBtn = makeButton(grey) { Cfg.cycle(this, "fps", Cfg.FPS.size, Cfg.DEF_FPS); refresh() }
         vidBtn = makeButton(grey) { Cfg.cycle(this, "video", Cfg.VIDEO_KBPS.size, Cfg.DEF_VIDEO); refresh() }
         audBtn = makeButton(grey) { Cfg.toggleAudio(this); refresh() }
+        micBtn = makeButton(grey) { Cfg.toggleMic(this); refresh() }
         audQBtn = makeButton(grey) { Cfg.cycle(this, "audioq", Cfg.AUDIO_KBPS.size, Cfg.DEF_AUDIO_Q); refresh() }
         hideBtn = makeButton(grey) { Cfg.toggleHideBubble(this); refresh() }
-        listOf(resBtn, fpsBtn, vidBtn, audBtn, audQBtn, hideBtn).forEach { panel.addRow(it) }
+        listOf(resBtn, fpsBtn, vidBtn, audBtn, micBtn, audQBtn, hideBtn).forEach { panel.addRow(it) }
 
         panel.addRow(makeButton(0xFF5F6368.toInt()) { stopSelf() }.apply { text = "Cerrar overlay" })
     }
@@ -216,12 +218,13 @@ class OverlayService : Service() {
         fpsBtn.text = "Fotogramas: ${Cfg.fps(this)} fps"
         vidBtn.text = "Calidad de video: ${Cfg.videoKbps(this) / 1000} Mbps"
         audBtn.text = "Audio interno: " + if (Cfg.audioOn(this)) "Sí" else "No"
+        micBtn.text = "Micrófono: " + if (Cfg.micOn(this)) "Sí" else "No"
         audQBtn.text = "Calidad de audio: ${Cfg.audioKbps(this)} kbps"
-        audQBtn.visibility = if (Cfg.audioOn(this)) View.VISIBLE else View.GONE
+        audQBtn.visibility = if (Cfg.audioOn(this) || Cfg.micOn(this)) View.VISIBLE else View.GONE
         hideBtn.text = "Burbuja al grabar: " + if (Cfg.hideBubble(this)) "oculta" else "visible"
 
         // Mientras se graba no se puede cambiar la calidad
-        listOf(resBtn, fpsBtn, vidBtn, audBtn, audQBtn).forEach {
+        listOf(resBtn, fpsBtn, vidBtn, audBtn, micBtn, audQBtn).forEach {
             it.isEnabled = !rec
             it.alpha = if (rec) 0.4f else 1f
         }
@@ -265,7 +268,7 @@ class OverlayService : Service() {
         if (panelShown) return
         val dm = resources.displayMetrics
         panelLp.x = (bubbleLp.x + dp(56)).coerceAtMost(dm.widthPixels - dp(260) - dp(8)).coerceAtLeast(dp(8))
-        panelLp.y = bubbleLp.y.coerceAtMost(dm.heightPixels - dp(470)).coerceAtLeast(dp(24))
+        panelLp.y = bubbleLp.y.coerceAtMost(dm.heightPixels - dp(520)).coerceAtLeast(dp(24))
         refresh()
         try { wm.addView(panel, panelLp); panelShown = true } catch (ex: Exception) {}
     }

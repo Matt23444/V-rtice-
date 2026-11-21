@@ -13,7 +13,7 @@ Grabador de pantalla con audio interno para Android 10 o superior. Sin librería
 
 1. Abre **Vórtice** y pulsa **Conceder permisos** (audio, notificaciones y «Mostrar sobre otras apps»).
 2. Pulsa **Encender overlay**. Aparece una burbuja ● que puedes arrastrar.
-3. Toca la burbuja para abrir el panel: **Grabar**, resolución, fotogramas por segundo, calidad de video, audio interno y calidad de audio.
+3. Toca la burbuja para abrir el panel: **Grabar**, resolución, fotogramas por segundo, calidad de video, audio interno, micrófono y calidad de audio. Con **Micrófono: Sí** se mezcla tu voz con el sonido del teléfono (por defecto está apagado).
 4. Al grabar, Android pide confirmar la captura de pantalla (lo hace en cada grabación).
 5. Los videos se guardan en `Películas/ScreenRec`.
 

@@ -10,6 +10,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.os.Process
 import android.view.Surface
@@ -30,6 +31,7 @@ class Recorder(
     private val videoBitrate: Int,
     private val withAudio: Boolean,
     private val audioBitrate: Int,
+    private val withMic: Boolean = false,
 ) {
     private class Sample(val isVideo: Boolean, val data: ByteArray, val pts: Long, val flags: Int)
 
@@ -57,6 +59,7 @@ class Recorder(
     private var vCodec: MediaCodec? = null
     private var aCodec: MediaCodec? = null
     private var aRecord: AudioRecord? = null
+    private var mRecord: AudioRecord? = null
     private var inputSurface: Surface? = null
     private var display: VirtualDisplay? = null
     private var vThread: Thread? = null
@@ -65,7 +68,7 @@ class Recorder(
     fun start() {
         originUs = System.nanoTime() / 1000
         muxer = MediaMuxer(fd, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        audioOn = withAudio && setupAudio()
+        audioOn = (withAudio || withMic) && setupAudio()
         setupVideo()
         running = true
         vThread = Thread({ videoLoop() }, "rec-video").also { it.start() }
@@ -120,32 +123,51 @@ class Recorder(
 
     // ---------------------------------------------------------------- audio
 
-    private fun setupAudio(): Boolean {
-        return try {
-            val cfg = AudioPlaybackCaptureConfiguration.Builder(projection)
-                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-                .addMatchingUsage(AudioAttributes.USAGE_GAME)
-                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-                .build()
-            val af = AudioFormat.Builder()
-                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setSampleRate(SAMPLE_RATE)
-                .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
-                .build()
-            val minBuf = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT
-            )
-            val rec = AudioRecord.Builder()
-                .setAudioFormat(af)
-                .setBufferSizeInBytes(maxOf(minBuf, 4096) * 4)
-                .setAudioPlaybackCaptureConfig(cfg)
-                .build()
-            if (rec.state != AudioRecord.STATE_INITIALIZED) {
-                rec.release()
-                return false
-            }
-            aRecord = rec
+    private fun audioFormat(channelMask: Int): AudioFormat = AudioFormat.Builder()
+        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+        .setSampleRate(SAMPLE_RATE)
+        .setChannelMask(channelMask)
+        .build()
 
+    private fun bufferSize(channelMask: Int): Int {
+        val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, channelMask, AudioFormat.ENCODING_PCM_16BIT)
+        return maxOf(minBuf, 4096) * 4
+    }
+
+    /** Audio que suena en el teléfono (apps, juegos, videos). */
+    private fun buildInternal(): AudioRecord? = try {
+        val cfg = AudioPlaybackCaptureConfiguration.Builder(projection)
+            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+            .build()
+        val rec = AudioRecord.Builder()
+            .setAudioFormat(audioFormat(AudioFormat.CHANNEL_IN_STEREO))
+            .setBufferSizeInBytes(bufferSize(AudioFormat.CHANNEL_IN_STEREO))
+            .setAudioPlaybackCaptureConfig(cfg)
+            .build()
+        if (rec.state == AudioRecord.STATE_INITIALIZED) rec else { rec.release(); null }
+    } catch (ex: Exception) {
+        null
+    }
+
+    /** Micrófono (mono; se convierte a estéreo al mezclar). */
+    private fun buildMic(): AudioRecord? = try {
+        val rec = AudioRecord.Builder()
+            .setAudioSource(MediaRecorder.AudioSource.MIC)
+            .setAudioFormat(audioFormat(AudioFormat.CHANNEL_IN_MONO))
+            .setBufferSizeInBytes(bufferSize(AudioFormat.CHANNEL_IN_MONO))
+            .build()
+        if (rec.state == AudioRecord.STATE_INITIALIZED) rec else { rec.release(); null }
+    } catch (ex: Exception) {
+        null
+    }
+
+    private fun setupAudio(): Boolean {
+        if (withAudio) aRecord = buildInternal()
+        if (withMic) mRecord = buildMic()
+        if (aRecord == null && mRecord == null) return false
+        return try {
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, CHANNELS).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
                 setInteger(MediaFormat.KEY_BIT_RATE, audioBitrate)
@@ -159,23 +181,75 @@ class Recorder(
         } catch (ex: Exception) {
             aRecord?.release()
             aRecord = null
+            mRecord?.release()
+            mRecord = null
             false
         }
     }
 
+    private fun sample(b: ByteArray, i: Int): Int = (b[i + 1].toInt() shl 8) or (b[i].toInt() and 0xFF)
+
+    private fun put(b: ByteArray, i: Int, v: Int) {
+        val c = v.coerceIn(-32768, 32767)
+        b[i] = (c and 0xFF).toByte()
+        b[i + 1] = ((c shr 8) and 0xFF).toByte()
+    }
+
+    /**
+     * Mezcla el audio interno (estéreo, puede ser null) con el micrófono (mono) en [out] (estéreo).
+     * Devuelve la cantidad de bytes escritos.
+     */
+    private fun mix(stereo: ByteArray?, stereoBytes: Int, mono: ByteArray, monoBytes: Int, out: ByteArray): Int {
+        val frames = if (stereo != null) minOf(stereoBytes / 4, monoBytes / 2) else monoBytes / 2
+        for (f in 0 until frames) {
+            val m = sample(mono, f * 2)
+            val l = (if (stereo != null) sample(stereo, f * 4) else 0) + m
+            val r = (if (stereo != null) sample(stereo, f * 4 + 2) else 0) + m
+            put(out, f * 4, l)
+            put(out, f * 4 + 2, r)
+        }
+        return frames * 4
+    }
+
     private fun audioLoop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-        val rec = aRecord ?: return
+        val internal = aRecord
+        var mic = mRecord
         val codec = aCodec ?: return
         val info = MediaCodec.BufferInfo()
-        val buf = ByteArray(4096)
+        val bufA = ByteArray(4096)   // estéreo: 1024 fotogramas
+        val bufM = ByteArray(2048)   // mono: 1024 fotogramas
+        val out = ByteArray(4096)
         var frames = 0L
         var baseUs = -1L
         try {
-            rec.startRecording()
+            internal?.startRecording()
+            mic?.startRecording()
             while (running) {
-                val n = rec.read(buf, 0, buf.size)
-                if (n < 0) throw IllegalStateException("AudioRecord error $n")
+                var nA = 0
+                var nM = 0
+                if (internal != null) {
+                    nA = internal.read(bufA, 0, bufA.size)
+                    if (nA < 0) throw IllegalStateException("AudioRecord error $nA")
+                }
+                if (mic != null) {
+                    nM = mic.read(bufM, 0, bufM.size)
+                    if (nM < 0) {
+                        mic = null   // si el micrófono falla, se sigue sin él
+                        nM = 0
+                    }
+                }
+                val n: Int
+                val data: ByteArray
+                if (internal != null && mic != null) {
+                    n = mix(bufA, nA, bufM, nM, out); data = out
+                } else if (internal != null) {
+                    n = nA; data = bufA
+                } else if (mic != null) {
+                    n = mix(null, 0, bufM, nM, out); data = out
+                } else {
+                    throw IllegalStateException("Sin fuente de audio")
+                }
                 if (n > 0) {
                     val chunkFrames = n / (2 * CHANNELS)
                     if (baseUs < 0) {
@@ -187,7 +261,7 @@ class Recorder(
                     if (idx >= 0) {
                         val ib = codec.getInputBuffer(idx)!!
                         ib.clear()
-                        ib.put(buf, 0, n)
+                        ib.put(data, 0, n)
                         codec.queueInputBuffer(idx, 0, n, pts, 0)
                         frames += chunkFrames
                     }
@@ -216,7 +290,8 @@ class Recorder(
                 tryStart()
             }
         } finally {
-            try { rec.stop() } catch (ex: Exception) {}
+            try { internal?.stop() } catch (ex: Exception) {}
+            try { mRecord?.stop() } catch (ex: Exception) {}
         }
     }
 
@@ -312,6 +387,7 @@ class Recorder(
         try { aCodec?.stop() } catch (ex: Exception) {}
         try { aCodec?.release() } catch (ex: Exception) {}
         try { aRecord?.release() } catch (ex: Exception) {}
+        try { mRecord?.release() } catch (ex: Exception) {}
         try { inputSurface?.release() } catch (ex: Exception) {}
 
         synchronized(lock) {
