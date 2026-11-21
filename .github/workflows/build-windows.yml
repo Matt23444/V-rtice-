@@ -1,0 +1,34 @@
+name: Build Windows
+
+on:
+  push:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Compilar
+        run: dotnet publish windows/Vortice.csproj -c Release -o out
+
+      - name: Descargar el instalador de Visual C++ (requisito de la librería)
+        shell: pwsh
+        run: Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile out/vc_redist.x64.exe
+
+      - name: Listar archivos generados
+        shell: pwsh
+        run: Get-ChildItem out -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vortice-Windows
+          path: out/
