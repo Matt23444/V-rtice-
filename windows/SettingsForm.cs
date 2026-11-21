@@ -10,19 +10,29 @@ namespace Vortice
     {
         private readonly Config _cfg;
         private readonly RecController _ctl;
+        private readonly PcStreamer _stream;
         private readonly Action _applyBubble;
         private readonly Timer _timer = new Timer { Interval = 1000 };
         private bool _loading = true;
 
+        // Grabar
         private ComboBox _res, _fps, _vid, _aud;
         private CheckBox _sys, _mic, _bubble;
         private Button _rec;
         private Label _state;
 
-        public SettingsForm(Config cfg, RecController ctl, Action applyBubble)
+        // Transmitir
+        private ComboBox _sres, _sfps, _sq;
+        private CheckBox _saud;
+        private Button _strBtn, _copy;
+        private TextBox _url;
+        private Label _strState;
+
+        public SettingsForm(Config cfg, RecController ctl, PcStreamer stream, Action applyBubble)
         {
             _cfg = cfg;
             _ctl = ctl;
+            _stream = stream;
             _applyBubble = applyBubble;
 
             Text = "Vórtice";
@@ -32,40 +42,58 @@ namespace Vortice
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Font;
             Font = new Font("Segoe UI", 9.5f);
-            ClientSize = new Size(380, 440);
+            ClientSize = new Size(400, 520);
 
-            var table = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 2,
-                Padding = new Padding(14),
-            };
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
-            Controls.Add(table);
+            var tabs = new TabControl { Dock = DockStyle.Fill };
+            var tabRec = new TabPage("Grabar");
+            var tabStr = new TabPage("Transmitir");
+            tabs.TabPages.Add(tabRec);
+            tabs.TabPages.Add(tabStr);
+            Controls.Add(tabs);
+
+            BuildRecordTab(tabRec);
+            BuildStreamTab(tabStr);
+
+            _loading = false;
+
+            _ctl.StateChanged += RefreshState;
+            _stream.StateChanged += RefreshState;
+            _timer.Tick += (s, e) => RefreshState();
+            VisibleChanged += (s, e) => RefreshState();
+            RefreshState();
+        }
+
+        private static TableLayoutPanel NewTable()
+        {
+            var t = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(12), AutoScroll = true };
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+            return t;
+        }
+
+        private void BuildRecordTab(TabPage page)
+        {
+            var table = NewTable();
+            page.Controls.Add(table);
 
             _res = AddCombo(table, "Resolución",
-                new[] { "Nativa", "1080p", "720p", "480p" }, new[] { 0, 1080, 720, 480 }, cfg.ShortSide);
+                new[] { "Nativa", "1080p", "720p", "480p" }, new[] { 0, 1080, 720, 480 }, _cfg.ShortSide);
             _fps = AddCombo(table, "Fotogramas por segundo",
-                new[] { "15 fps", "24 fps", "30 fps", "60 fps" }, new[] { 15, 24, 30, 60 }, cfg.Fps);
+                new[] { "15 fps", "24 fps", "30 fps", "60 fps" }, new[] { 15, 24, 30, 60 }, _cfg.Fps);
             _vid = AddCombo(table, "Calidad de video",
-                new[] { "1 Mbps", "2 Mbps", "3 Mbps", "5 Mbps", "8 Mbps" }, new[] { 1, 2, 3, 5, 8 }, cfg.VideoMbps);
-            _sys = AddCheck(table, "Audio del sistema (lo que suena en la PC)", cfg.SysAudio);
-            _mic = AddCheck(table, "Micrófono", cfg.Mic);
+                new[] { "1 Mbps", "2 Mbps", "3 Mbps", "5 Mbps", "8 Mbps" }, new[] { 1, 2, 3, 5, 8 }, _cfg.VideoMbps);
+            _sys = AddCheck(table, "Audio del sistema (lo que suena en la PC)", _cfg.SysAudio);
+            _mic = AddCheck(table, "Micrófono", _cfg.Mic);
             _aud = AddCombo(table, "Calidad de audio",
-                new[] { "96 kbps", "128 kbps", "160 kbps", "192 kbps" }, new[] { 96, 128, 160, 192 }, cfg.AudioKbps);
-            _bubble = AddCheck(table, "Mostrar burbuja flotante", cfg.Bubble);
+                new[] { "96 kbps", "128 kbps", "160 kbps", "192 kbps" }, new[] { 96, 128, 160, 192 }, _cfg.AudioKbps);
+            _bubble = AddCheck(table, "Mostrar burbuja flotante", _cfg.Bubble);
 
             _rec = new Button { Dock = DockStyle.Fill, Height = 46, Font = new Font("Segoe UI", 11f, FontStyle.Bold) };
             _rec.Click += (s, e) => _ctl.Toggle();
-            table.Controls.Add(_rec, 0, table.RowCount);
-            table.SetColumnSpan(_rec, 2);
-            table.RowCount++;
+            AddWide(table, _rec);
 
             _state = new Label { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 8, 0, 0) };
-            table.Controls.Add(_state, 0, table.RowCount);
-            table.SetColumnSpan(_state, 2);
-            table.RowCount++;
+            AddWide(table, _state);
 
             var open = new Button { Text = "Abrir carpeta de videos", Dock = DockStyle.Fill, Height = 34 };
             open.Click += (s, e) =>
@@ -73,30 +101,71 @@ namespace Vortice
                 try { Directory.CreateDirectory(_cfg.OutDir); Process.Start("explorer.exe", "\"" + _cfg.OutDir + "\""); }
                 catch (Exception) { }
             };
-            table.Controls.Add(open, 0, table.RowCount);
-            table.SetColumnSpan(open, 2);
-            table.RowCount++;
+            AddWide(table, open);
 
-            var tip = new Label
+            AddWide(table, new Label
             {
-                Dock = DockStyle.Fill,
                 AutoSize = true,
                 ForeColor = Color.DimGray,
                 Padding = new Padding(0, 10, 0, 0),
+                MaximumSize = new Size(340, 0),
                 Text = "Atajo: Ctrl + Alt + R para grabar o detener.\n" +
                        "Para gastar menos CPU: 720p, 24 o 30 fps y 2 a 3 Mbps.\n" +
                        "Los ajustes no se pueden cambiar mientras se graba.",
+            });
+        }
+
+        private void BuildStreamTab(TabPage page)
+        {
+            var table = NewTable();
+            page.Controls.Add(table);
+
+            _sres = AddCombo(table, "Resolución",
+                new[] { "360p", "480p", "720p" }, new[] { 360, 480, 720 }, _cfg.StreamRes);
+            _sfps = AddCombo(table, "Fluidez",
+                new[] { "8 fps", "12 fps", "15 fps", "24 fps" }, new[] { 8, 12, 15, 24 }, _cfg.StreamFps);
+            _sq = AddCombo(table, "Calidad de imagen",
+                new[] { "Baja", "Media", "Alta", "Máxima" }, new[] { 40, 55, 70, 85 }, _cfg.StreamQuality);
+            _saud = AddCheck(table, "Transmitir el audio del sistema", _cfg.StreamAudio);
+
+            _strBtn = new Button { Dock = DockStyle.Fill, Height = 46, Font = new Font("Segoe UI", 11f, FontStyle.Bold) };
+            _strBtn.Click += (s, e) => _stream.Toggle();
+            AddWide(table, _strBtn);
+
+            _strState = new Label { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 8, 0, 4) };
+            AddWide(table, _strState);
+
+            _url = new TextBox { ReadOnly = true, Dock = DockStyle.Fill, Visible = false };
+            AddWide(table, _url);
+
+            _copy = new Button { Text = "Copiar enlace", Dock = DockStyle.Fill, Height = 34, Visible = false };
+            _copy.Click += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(_stream.Url))
+                {
+                    try { Clipboard.SetText(_stream.Url); } catch (Exception) { }
+                }
             };
-            table.Controls.Add(tip, 0, table.RowCount);
-            table.SetColumnSpan(tip, 2);
-            table.RowCount++;
+            AddWide(table, _copy);
 
-            _loading = false;
+            AddWide(table, new Label
+            {
+                AutoSize = true,
+                ForeColor = Color.DimGray,
+                Padding = new Padding(0, 10, 0, 0),
+                MaximumSize = new Size(340, 0),
+                Text = "El otro dispositivo (celular, tablet u otra PC) debe estar en la misma red Wi-Fi " +
+                       "y abrir el enlace en el navegador. No necesita instalar nada.\n" +
+                       "La primera vez, Windows pedirá permiso en el firewall: marca «Redes privadas».\n" +
+                       "Sin nadie mirando, la transmisión no consume CPU.",
+            });
+        }
 
-            _ctl.StateChanged += RefreshState;
-            _timer.Tick += (s, e) => RefreshState();
-            VisibleChanged += (s, e) => RefreshState();
-            RefreshState();
+        private static void AddWide(TableLayoutPanel t, Control c)
+        {
+            t.Controls.Add(c, 0, t.RowCount);
+            t.SetColumnSpan(c, 2);
+            t.RowCount++;
         }
 
         private ComboBox AddCombo(TableLayoutPanel t, string label, string[] names, int[] values, int current)
@@ -117,9 +186,7 @@ namespace Vortice
         {
             var c = new CheckBox { Text = label, Checked = value, AutoSize = true, Padding = new Padding(0, 6, 0, 6) };
             c.CheckedChanged += (s, e) => Apply();
-            t.Controls.Add(c, 0, t.RowCount);
-            t.SetColumnSpan(c, 2);
-            t.RowCount++;
+            AddWide(t, c);
             return c;
         }
 
@@ -136,6 +203,10 @@ namespace Vortice
             _cfg.Mic = _mic.Checked;
             bool bubbleChanged = _cfg.Bubble != _bubble.Checked;
             _cfg.Bubble = _bubble.Checked;
+            _cfg.StreamRes = Val(_sres);
+            _cfg.StreamFps = Val(_sfps);
+            _cfg.StreamQuality = Val(_sq);
+            _cfg.StreamAudio = _saud.Checked;
             _cfg.Save();
             _aud.Enabled = !_ctl.Recording && (_sys.Checked || _mic.Checked);
             if (bubbleChanged) _applyBubble();
@@ -144,11 +215,31 @@ namespace Vortice
         private void RefreshState()
         {
             bool rec = _ctl.Recording;
+            bool str = _stream.Running;
+
             _rec.Text = rec ? "■  Detener" : "●  Grabar";
             _rec.BackColor = rec ? Color.FromArgb(217, 48, 37) : SystemColors.Control;
             _rec.ForeColor = rec ? Color.White : SystemColors.ControlText;
             foreach (var c in new Control[] { _res, _fps, _vid, _sys, _mic }) c.Enabled = !rec;
             _aud.Enabled = !rec && (_sys.Checked || _mic.Checked);
+
+            _strBtn.Text = str ? "■  Detener transmisión" : "▶  Transmitir pantalla";
+            _strBtn.BackColor = str ? Color.FromArgb(26, 115, 232) : SystemColors.Control;
+            _strBtn.ForeColor = str ? Color.White : SystemColors.ControlText;
+            foreach (var c in new Control[] { _sres, _sfps, _sq, _saud }) c.Enabled = !str;
+            _url.Visible = str;
+            _copy.Visible = str;
+            if (str)
+            {
+                _url.Text = _stream.Url;
+                _strState.Text = _stream.AllUrls.Count > 1
+                    ? "Transmitiendo. Abre este enlace en el otro dispositivo\n(si no abre, prueba con otra de tus direcciones: " + (_stream.AllUrls.Count - 1) + " más)."
+                    : "Transmitiendo. Abre este enlace en el otro dispositivo:";
+            }
+            else
+            {
+                _strState.Text = "Listo para transmitir";
+            }
 
             if (rec)
             {

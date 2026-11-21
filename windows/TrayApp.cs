@@ -11,6 +11,7 @@ namespace Vortice
     {
         private readonly Config _cfg = Config.Load();
         private readonly RecController _ctl;
+        private readonly PcStreamer _stream;
         private readonly NotifyIcon _tray;
         private readonly Icon _idle;
         private readonly Icon _rec;
@@ -21,11 +22,13 @@ namespace Vortice
         public TrayApp()
         {
             _ctl = new RecController(_cfg);
+            _stream = new PcStreamer(_cfg);
             _idle = Art.MakeIcon(32, false);
             _rec = Art.MakeIcon(32, true);
 
             var menu = new ContextMenuStrip();
             menu.Items.Add("Grabar / Detener   (Ctrl+Alt+R)", null, (s, e) => _ctl.Toggle());
+            menu.Items.Add("Transmitir pantalla / Detener", null, (s, e) => { ShowSettings(); _stream.Toggle(); });
             menu.Items.Add("Ajustes…", null, (s, e) => ShowSettings());
             menu.Items.Add("Abrir carpeta de videos", null, (s, e) => OpenFolder());
             menu.Items.Add(new ToolStripSeparator());
@@ -42,6 +45,8 @@ namespace Vortice
 
             _ctl.StateChanged += OnState;
             _ctl.Info += msg => _tray.ShowBalloonTip(3000, "Vórtice", msg, ToolTipIcon.Info);
+            _stream.Info += msg => _tray.ShowBalloonTip(4000, "Vórtice", msg, ToolTipIcon.Info);
+            _stream.StateChanged += () => _tray.Text = _stream.Running ? "Vórtice — transmitiendo" : "Vórtice";
 
             _hotkey = new HotkeyWindow();
             _hotkey.Pressed += () => _ctl.Toggle();
@@ -54,7 +59,7 @@ namespace Vortice
 
         private void ShowSettings()
         {
-            if (_settings == null) _settings = new SettingsForm(_cfg, _ctl, ApplyBubble);
+            if (_settings == null) _settings = new SettingsForm(_cfg, _ctl, _stream, ApplyBubble);
             _settings.Show();
             _settings.WindowState = FormWindowState.Normal;
             _settings.Activate();
@@ -117,6 +122,7 @@ namespace Vortice
 
         private void Finish()
         {
+            try { _stream.Stop(); } catch (Exception) { }
             try { _hotkey.Dispose(); } catch (Exception) { }
             _tray.Visible = false;
             _tray.Dispose();

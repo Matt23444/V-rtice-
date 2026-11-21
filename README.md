@@ -40,3 +40,17 @@ Grabador de pantalla + audio del sistema (y micrófono opcional) para Windows 10
 4. Los videos se guardan en `Videos\Vortice`. Ajustes en `%AppData%\Vortice\config.ini`.
 
 Para gastar poca CPU: 720p, 24 o 30 fps y 2 a 3 Mbps.
+
+---
+
+## Transmitir la pantalla a otro dispositivo (misma red Wi-Fi)
+
+Funciona en ambos sentidos: **Android → PC** y **PC → Android** (también a otro celular o tablet). El que mira **no instala nada**: solo abre un enlace en el navegador.
+
+1. En el dispositivo que transmite, pulsa **Transmitir pantalla** (en Android, desde el panel de la burbuja; en Windows, pestaña **Transmitir** o menú de la bandeja).
+2. Aparece un enlace como `http://192.168.1.20:8080/?k=ABC123`. Ábrelo en el navegador del otro dispositivo (mismo Wi-Fi). El enlace incluye una clave para que nadie más pueda mirar.
+3. Para oír el sonido, toca **Activar audio** en la página. Si el audio llega con retraso respecto al video, mueve la barra **Sincronía de audio**.
+
+Sin Wi-Fi compartido: activa la zona Wi-Fi del celular y conecta la PC a ella, o usa anclaje USB. Por Bluetooth no es viable (muy lento).
+
+Notas: la imagen va como MJPEG (compatible con cualquier navegador). Sin espectadores no se captura ni se codifica nada. En Windows, la primera vez hay que permitir la app en el firewall para redes privadas. En Android no se puede grabar y transmitir a la vez.

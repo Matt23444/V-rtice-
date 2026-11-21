@@ -14,6 +14,10 @@ namespace Vortice
         public bool SysAudio = true;
         public bool Mic = false;
         public bool Bubble = true;
+        public int StreamRes = 480;     // lado corto de la transmisión
+        public int StreamFps = 12;
+        public int StreamQuality = 55;  // calidad JPEG
+        public bool StreamAudio = true;
         public string OutDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Vortice");
 
@@ -49,6 +53,10 @@ namespace Vortice
                         case "SysAudio": c.SysAudio = v == "1"; break;
                         case "Mic": c.Mic = v == "1"; break;
                         case "Bubble": c.Bubble = v == "1"; break;
+                        case "StreamRes": if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n)) c.StreamRes = n; break;
+                        case "StreamFps": if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n)) c.StreamFps = n; break;
+                        case "StreamQuality": if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n)) c.StreamQuality = n; break;
+                        case "StreamAudio": c.StreamAudio = v == "1"; break;
                         case "OutDir": if (v.Length > 0) c.OutDir = v; break;
                     }
                 }
@@ -71,6 +79,10 @@ namespace Vortice
                     "SysAudio=" + (SysAudio ? "1" : "0"),
                     "Mic=" + (Mic ? "1" : "0"),
                     "Bubble=" + (Bubble ? "1" : "0"),
+                    "StreamRes=" + StreamRes,
+                    "StreamFps=" + StreamFps,
+                    "StreamQuality=" + StreamQuality,
+                    "StreamAudio=" + (StreamAudio ? "1" : "0"),
                     "OutDir=" + OutDir,
                 });
             }
