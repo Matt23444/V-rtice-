@@ -27,3 +27,16 @@ Grabador de pantalla con audio interno para Android 10 o superior. Sin librería
 - Si eliges «Burbuja al grabar: visible», la burbuja aparecerá en el video. Con la opción «oculta» se detiene desde la notificación.
 - No se puede cambiar la calidad mientras se graba.
 - La orientación queda fija con la que tenía la pantalla al empezar a grabar.
+
+---
+
+## Versión para Windows (carpeta `windows/`)
+
+Grabador de pantalla + audio del sistema (y micrófono opcional) para Windows 10/11 de 64 bits. Vive en la bandeja del sistema, usa el codificador H.264 por hardware de Windows (Quick Sync, NVENC o AMD si existen) y no consume nada cuando está inactivo.
+
+1. En **Actions**, abre la última ejecución de **Build Windows** y descarga **Vortice-Windows**.
+2. Descomprime. Si la app no abre, instala primero `vc_redist.x64.exe` (incluido) y reinicia.
+3. Abre `Vortice.exe`. Atajo global: **Ctrl + Alt + R** para grabar y detener. También hay una burbuja flotante (se puede ocultar en Ajustes).
+4. Los videos se guardan en `Videos\Vortice`. Ajustes en `%AppData%\Vortice\config.ini`.
+
+Para gastar poca CPU: 720p, 24 o 30 fps y 2 a 3 Mbps.

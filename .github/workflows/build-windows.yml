@@ -24,6 +24,10 @@ jobs:
         shell: pwsh
         run: Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile out/vc_redist.x64.exe
 
+      - name: Quitar archivos que no hacen falta
+        shell: pwsh
+        run: Remove-Item out/*.pdb, out/*.xml -ErrorAction SilentlyContinue
+
       - name: Listar archivos generados
         shell: pwsh
         run: Get-ChildItem out -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
