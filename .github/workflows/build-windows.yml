@@ -18,7 +18,7 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Compilar
-        run: dotnet publish windows/Vortice.csproj -c Release -o out
+        run: dotnet publish windows/Vortice.csproj -c Release -p:Platform=x64 -o out
 
       - name: Descargar el instalador de Visual C++ (requisito de la librería)
         shell: pwsh
