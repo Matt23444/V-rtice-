@@ -200,22 +200,41 @@ class StreamService : Service() {
         null
     }
 
-    private fun startAudio(rec: AudioRecord, srv: StreamServer) {
-        audioRec = rec
+    private fun startAudio(first: AudioRecord, srv: StreamServer) {
         audioRun = true
         audioThread = thread(name = "stream-audio", isDaemon = true) {
             Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
             val buf = ByteArray(4096)
-            try {
-                rec.startRecording()
-                while (audioRun) {
-                    val n = rec.read(buf, 0, buf.size)
-                    if (n > 0) srv.pushAudio(buf.copyOf(n)) else if (n < 0) break
+            var rec: AudioRecord? = first
+            try { first.startRecording() } catch (ex: Exception) { rec = null }
+            while (audioRun) {
+                val r = rec
+                if (r == null) {
+                    // La fuente se perdió (p. ej. cambiaron los auriculares): se vuelve a crear.
+                    try { Thread.sleep(500) } catch (ex: InterruptedException) { break }
+                    val p = projection ?: break
+                    val nr = buildAudio(p)
+                    if (nr != null) {
+                        try {
+                            nr.startRecording()
+                            rec = nr
+                        } catch (ex: Exception) {
+                            try { nr.release() } catch (e2: Exception) {}
+                        }
+                    }
+                    continue
                 }
-            } catch (ex: Exception) {
-            } finally {
-                try { rec.stop() } catch (ex: Exception) {}
+                val n = try { r.read(buf, 0, buf.size) } catch (ex: Exception) { -1 }
+                if (n > 0) {
+                    srv.pushAudio(buf.copyOf(n))
+                } else if (n < 0) {
+                    try { r.stop() } catch (ex: Exception) {}
+                    try { r.release() } catch (ex: Exception) {}
+                    rec = null
+                }
             }
+            try { rec?.stop() } catch (ex: Exception) {}
+            try { rec?.release() } catch (ex: Exception) {}
         }
     }
 

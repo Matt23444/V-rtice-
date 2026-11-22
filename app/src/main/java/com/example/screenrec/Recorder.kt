@@ -16,6 +16,8 @@ import android.os.Process
 import android.view.Surface
 import java.io.FileDescriptor
 import java.nio.ByteBuffer
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.locks.LockSupport
 
 /**
  * Graba pantalla (H.264 por hardware) + audio interno (AAC) directamente a un MP4.
@@ -195,81 +197,140 @@ class Recorder(
         b[i + 1] = ((c shr 8) and 0xFF).toByte()
     }
 
-    /**
-     * Mezcla el audio interno (estéreo, puede ser null) con el micrófono (mono) en [out] (estéreo).
-     * Devuelve la cantidad de bytes escritos.
-     */
-    private fun mix(stereo: ByteArray?, stereoBytes: Int, mono: ByteArray, monoBytes: Int, out: ByteArray): Int {
-        val frames = if (stereo != null) minOf(stereoBytes / 4, monoBytes / 2) else monoBytes / 2
-        for (f in 0 until frames) {
-            val m = sample(mono, f * 2)
-            val l = (if (stereo != null) sample(stereo, f * 4) else 0) + m
-            val r = (if (stereo != null) sample(stereo, f * 4 + 2) else 0) + m
-            put(out, f * 4, l)
-            put(out, f * 4 + 2, r)
+    /** Lee una fuente de audio en su propio hilo. Si se pierde (p. ej. cambian los auriculares), la vuelve a crear. */
+    private inner class Reader(private val isInternal: Boolean, first: AudioRecord) :
+        Thread(if (isInternal) "rec-in" else "rec-mic") {
+        val queue = ArrayBlockingQueue<ByteArray>(12)
+        @Volatile var alive = true
+        private var rec: AudioRecord? = first
+
+        override fun run() {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+            val size = if (isInternal) 4096 else 2048
+            val buf = ByteArray(size)
+            try { rec?.startRecording() } catch (ex: Exception) { drop() }
+            while (alive) {
+                val r = rec
+                if (r == null) {
+                    try { sleep(400) } catch (ex: InterruptedException) { break }
+                    val nr = if (isInternal) buildInternal() else buildMic()
+                    if (nr != null) {
+                        try {
+                            nr.startRecording()
+                            rec = nr
+                        } catch (ex: Exception) {
+                            try { nr.release() } catch (e2: Exception) {}
+                        }
+                    }
+                    continue
+                }
+                val n = try { r.read(buf, 0, size) } catch (ex: Exception) { -1 }
+                if (n > 0) {
+                    val c = buf.copyOf(n)
+                    if (!queue.offer(c)) {
+                        queue.poll()
+                        queue.offer(c)
+                    }
+                } else if (n < 0) {
+                    drop()
+                }
+            }
+            drop()
         }
-        return frames * 4
+
+        private fun drop() {
+            val r = rec
+            rec = null
+            if (r != null) {
+                try { r.stop() } catch (ex: Exception) {}
+                try { r.release() } catch (ex: Exception) {}
+            }
+        }
     }
 
+    /** Compresión suave para que no sature (evita la distorsión al sumar juego + voz). */
+    private fun softClip(v: Float): Int {
+        val x = v / 32768f
+        val a = kotlin.math.abs(x)
+        val y = if (a <= 0.8f) x else kotlin.math.sign(x) * (0.8f + 0.2f * kotlin.math.tanh((a - 0.8f) / 0.2f))
+        return (y * 32767f).toInt()
+    }
+
+    /** Mezcla un bloque de 1024 muestras: interno (estéreo) + micrófono (mono). Si falta una fuente, va en silencio. */
+    private fun mixChunk(a: ByteArray?, m: ByteArray?, out: ByteArray, hasIn: Boolean, hasMic: Boolean) {
+        val gA = if (hasMic) 0.85f else 1f
+        val gM = if (hasIn) 1.6f else 1.3f
+        for (f in 0 until 1024) {
+            var l = 0f
+            var r = 0f
+            if (a != null && f * 4 + 3 < a.size) {
+                l += sample(a, f * 4) * gA
+                r += sample(a, f * 4 + 2) * gA
+            }
+            if (m != null && f * 2 + 1 < m.size) {
+                val v = sample(m, f * 2) * gM
+                l += v
+                r += v
+            }
+            put(out, f * 4, softClip(l))
+            put(out, f * 4 + 2, softClip(r))
+        }
+    }
+
+    private fun takeLatest(q: ArrayBlockingQueue<ByteArray>): ByteArray? {
+        while (q.size > 3) q.poll()   // si se acumula retraso, se descarta lo más viejo
+        return q.poll()
+    }
+
+    private fun feedAudio(codec: MediaCodec, data: ByteArray, pts: Long) {
+        var tries = 0
+        while (tries++ < 5) {
+            val idx = codec.dequeueInputBuffer(10_000)
+            if (idx >= 0) {
+                val ib = codec.getInputBuffer(idx)!!
+                ib.clear()
+                ib.put(data, 0, data.size)
+                codec.queueInputBuffer(idx, 0, data.size, pts, 0)
+                return
+            }
+        }
+    }
+
+    /**
+     * Un solo hilo marca el ritmo (un bloque cada ~23 ms según el reloj real) y mezcla lo que hayan
+     * leído las fuentes. Así, aunque una fuente se corte, el audio no se detiene ni se desincroniza.
+     */
     private fun audioLoop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-        val internal = aRecord
-        var mic = mRecord
         val codec = aCodec ?: return
+        val inR = aRecord?.let { Reader(true, it) }
+        val micR = mRecord?.let { Reader(false, it) }
         val info = MediaCodec.BufferInfo()
-        val bufA = ByteArray(4096)   // estéreo: 1024 fotogramas
-        val bufM = ByteArray(2048)   // mono: 1024 fotogramas
         val out = ByteArray(4096)
-        var frames = 0L
-        var baseUs = -1L
+        val frameNs = 1024L * 1_000_000_000L / SAMPLE_RATE
+        var chunks = 0L
         try {
-            internal?.startRecording()
-            mic?.startRecording()
+            inR?.start()
+            micR?.start()
+            val startNs = System.nanoTime()
+            val baseUs = (startNs / 1000 - originUs).coerceAtLeast(0L)
             while (running) {
-                var nA = 0
-                var nM = 0
-                if (internal != null) {
-                    nA = internal.read(bufA, 0, bufA.size)
-                    if (nA < 0) throw IllegalStateException("AudioRecord error $nA")
+                val due = startNs + (chunks + 1) * frameNs
+                var wait = due - System.nanoTime()
+                while (wait > 0 && running) {
+                    LockSupport.parkNanos(wait)
+                    wait = due - System.nanoTime()
                 }
-                if (mic != null) {
-                    nM = mic.read(bufM, 0, bufM.size)
-                    if (nM < 0) {
-                        mic = null   // si el micrófono falla, se sigue sin él
-                        nM = 0
-                    }
-                }
-                val n: Int
-                val data: ByteArray
-                if (internal != null && mic != null) {
-                    n = mix(bufA, nA, bufM, nM, out); data = out
-                } else if (internal != null) {
-                    n = nA; data = bufA
-                } else if (mic != null) {
-                    n = mix(null, 0, bufM, nM, out); data = out
-                } else {
-                    throw IllegalStateException("Sin fuente de audio")
-                }
-                if (n > 0) {
-                    val chunkFrames = n / (2 * CHANNELS)
-                    if (baseUs < 0) {
-                        baseUs = (System.nanoTime() / 1000 - originUs -
-                            chunkFrames * 1_000_000L / SAMPLE_RATE).coerceAtLeast(0L)
-                    }
-                    val pts = baseUs + frames * 1_000_000L / SAMPLE_RATE
-                    val idx = codec.dequeueInputBuffer(10_000)
-                    if (idx >= 0) {
-                        val ib = codec.getInputBuffer(idx)!!
-                        ib.clear()
-                        ib.put(data, 0, n)
-                        codec.queueInputBuffer(idx, 0, n, pts, 0)
-                        frames += chunkFrames
-                    }
-                }
+                if (!running) break
+                val a = inR?.let { takeLatest(it.queue) }
+                val m = micR?.let { takeLatest(it.queue) }
+                mixChunk(a, m, out, inR != null, micR != null)
+                feedAudio(codec, out, baseUs + chunks * 1024L * 1_000_000L / SAMPLE_RATE)
+                chunks++
                 drainAudio(codec, info, 0)
             }
             // Fin de flujo
-            val endPts = (if (baseUs < 0) 0L else baseUs) + frames * 1_000_000L / SAMPLE_RATE
+            val endPts = baseUs + chunks * 1024L * 1_000_000L / SAMPLE_RATE
             var queued = false
             var tries = 0
             while (!queued && tries++ < 50) {
@@ -284,14 +345,16 @@ class Recorder(
                 if (drainAudio(codec, info, 10_000)) break
             }
         } catch (ex: Exception) {
-            // Si el audio falla, se sigue con video solamente.
+            // Si el audio falla de verdad, se sigue con video solamente.
             synchronized(lock) {
                 audioOn = false
                 tryStart()
             }
         } finally {
-            try { internal?.stop() } catch (ex: Exception) {}
-            try { mRecord?.stop() } catch (ex: Exception) {}
+            inR?.alive = false
+            micR?.alive = false
+            try { inR?.join(800) } catch (ex: Exception) {}
+            try { micR?.join(800) } catch (ex: Exception) {}
         }
     }
 
