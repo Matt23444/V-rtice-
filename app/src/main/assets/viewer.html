@@ -22,6 +22,7 @@
   <b>Vórtice</b>
   <button id="fs">Pantalla completa</button>
   <button id="au" hidden>🔊 Activar audio</button>
+  <button id="rc" hidden>⏺ Grabar aquí</button>
   <label id="dl" hidden>Sincronía de audio
     <input id="delay" type="range" min="0" max="3000" step="100" value="0">
     <span id="dv">0 ms</span>
@@ -71,6 +72,85 @@
     if (d.fullscreenElement) { d.exitFullscreen(); }
     else if (el.requestFullscreen) { el.requestFullscreen(); }
   };
+
+  // ---- Grabar lo que se recibe, en este mismo navegador (se guarda como .webm)
+  var rc = document.getElementById('rc');
+  var rec = null, chunks = [], canvas = null, ctx = null, drawTimer = null, tickTimer = null, t0 = 0, starting = false;
+  if (window.MediaRecorder && HTMLCanvasElement.prototype.captureStream) rc.hidden = false;
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function pickType() {
+    var c = ['video/webm;codecs=h264,opus', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm'];
+    for (var i = 0; i < c.length; i++) { if (MediaRecorder.isTypeSupported(c[i])) return c[i]; }
+    return '';
+  }
+  function drawFrame() {
+    if (!v.naturalWidth) return;
+    if (canvas.width !== v.naturalWidth || canvas.height !== v.naturalHeight) {
+      canvas.width = v.naturalWidth; canvas.height = v.naturalHeight;
+    }
+    ctx.drawImage(v, 0, 0);
+  }
+  function tick() {
+    var s = Math.floor((Date.now() - t0) / 1000);
+    rc.textContent = '⏹ Detener y guardar  ' + pad(Math.floor(s / 60)) + ':' + pad(s % 60);
+  }
+  function begin(audioStream) {
+    canvas = document.createElement('canvas');
+    canvas.width = v.naturalWidth || 640; canvas.height = v.naturalHeight || 360;
+    ctx = canvas.getContext('2d');
+    drawFrame();
+    var stream = canvas.captureStream(15);
+    if (audioStream) { audioStream.getAudioTracks().forEach(function (t) { stream.addTrack(t); }); }
+    var type = pickType();
+    var opts = { videoBitsPerSecond: 2500000, audioBitsPerSecond: 96000 };
+    if (type) opts.mimeType = type;
+    try { rec = new MediaRecorder(stream, opts); }
+    catch (e) { st.textContent = 'Este navegador no puede grabar'; starting = false; rc.textContent = '⏺ Grabar aquí'; return; }
+    chunks = [];
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = saveRec;
+    rec.start(1000);
+    drawTimer = setInterval(drawFrame, 1000 / 15);
+    t0 = Date.now();
+    tickTimer = setInterval(tick, 500);
+    tick();
+    starting = false;
+  }
+  function startRec() {
+    if (starting) return;
+    starting = true;
+    rc.textContent = 'Preparando…';
+    var wantAudio = !au.hidden;
+    if (wantAudio && !audioOn) au.click();   // el clic cuenta como gesto del usuario para poder reproducir audio
+    if (!wantAudio || !a.captureStream) { begin(null); return; }
+    var as = null;
+    try { as = a.captureStream(); } catch (e) { as = null; }
+    var tries = 0;
+    (function wait() {
+      if (as && as.getAudioTracks().length > 0) { begin(as); }
+      else if (++tries > 30) { begin(null); }   // si el audio no llega en 3 s, se graba solo el video
+      else { setTimeout(wait, 100); }
+    })();
+  }
+  function stopRec() {
+    clearInterval(drawTimer); clearInterval(tickTimer);
+    try { rec.stop(); } catch (e) {}
+    rc.textContent = '⏺ Grabar aquí';
+  }
+  function saveRec() {
+    var blob = new Blob(chunks, { type: (rec && rec.mimeType) || 'video/webm' });
+    var d = new Date();
+    var name = 'Vortice_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' +
+               pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.webm';
+    var l = document.createElement('a');
+    l.href = URL.createObjectURL(blob); l.download = name;
+    document.body.appendChild(l); l.click();
+    setTimeout(function () { URL.revokeObjectURL(l.href); l.remove(); }, 4000);
+    rec = null; chunks = [];
+    st.textContent = 'Guardado: ' + name;
+  }
+  rc.onclick = function () { if (rec) stopRec(); else startRec(); };
 
   function showBar() {
     bar.classList.remove('hide');

@@ -54,3 +54,7 @@ Funciona en ambos sentidos: **Android → PC** y **PC → Android** (también a 
 Sin Wi-Fi compartido: activa la zona Wi-Fi del celular y conecta la PC a ella, o usa anclaje USB. Por Bluetooth no es viable (muy lento).
 
 Notas: la imagen va como MJPEG (compatible con cualquier navegador). Sin espectadores no se captura ni se codifica nada. En Windows, la primera vez hay que permitir la app en el firewall para redes privadas. En Android no se puede grabar y transmitir a la vez.
+
+### Grabar lo que se recibe
+
+En la página del visor hay un botón **Grabar aquí**. Graba lo que ves (con el audio, si lo activaste) y al detener descarga un archivo `.webm` en el dispositivo que recibe. Mantén esa pestaña abierta y visible mientras graba. Los archivos largos ocupan memoria: para grabaciones largas es mejor grabar directamente con Vórtice en el dispositivo que transmite.
